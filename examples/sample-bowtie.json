@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "meta": {
+    "title": "Loss of containment - LPG storage",
+    "author": "Process Safety Team",
+    "created": "2026-01-15T09:00:00.000Z",
+    "modified": "2026-01-15T09:00:00.000Z"
+  },
+  "hazard": {
+    "id": "hz1",
+    "name": "Pressurised LPG",
+    "description": "Liquefied petroleum gas stored at 8 bar in a 50 m3 bulk tank."
+  },
+  "topEvent": {
+    "id": "te1",
+    "name": "Loss of containment",
+    "description": "Uncontrolled release of LPG from the tank or its connected piping."
+  },
+  "threats": [
+    {
+      "id": "t1",
+      "name": "Corrosion of tank shell",
+      "description": "External or internal corrosion thins the shell wall over time.",
+      "barriers": [
+        {
+          "id": "b1",
+          "name": "Protective coating",
+          "description": "Epoxy coating, repainted every 5 years.",
+          "owner": "Maintenance",
+          "type": "hardware",
+          "effectiveness": "good",
+          "escalationFactors": [
+            {
+              "id": "e1",
+              "name": "Coating damaged during maintenance",
+              "description": "Scaffolding or tools scrape the coating.",
+              "barriers": [
+                {
+                  "id": "eb1",
+                  "name": "Post-work coating inspection",
+                  "description": "Inspector signs off after each job.",
+                  "owner": "Maintenance",
+                  "type": "procedural",
+                  "effectiveness": "fair",
+                  "escalationFactors": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "b2",
+          "name": "Thickness inspection",
+          "description": "Ultrasonic wall thickness survey every 2 years.",
+          "owner": "Inspection",
+          "type": "procedural",
+          "effectiveness": "fair",
+          "escalationFactors": []
+        }
+      ]
+    },
+    {
+      "id": "t2",
+      "name": "Overpressure",
+      "description": "Tank pressure exceeds design pressure, e.g. from heat or overfilling.",
+      "barriers": [
+        {
+          "id": "b3",
+          "name": "High-level alarm",
+          "description": "Alarm at 80% fill level.",
+          "owner": "Operations",
+          "type": "hardware",
+          "effectiveness": "good",
+          "escalationFactors": []
+        },
+        {
+          "id": "b4",
+          "name": "Pressure relief valve",
+          "description": "Spring-loaded PSV set at 10 bar.",
+          "owner": "Maintenance",
+          "type": "hardware",
+          "effectiveness": "good",
+          "escalationFactors": [
+            {
+              "id": "e2",
+              "name": "PSV stuck due to fouling",
+              "description": "Debris or corrosion prevents the valve from lifting.",
+              "barriers": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "t3",
+      "name": "Vehicle impact",
+      "description": "Delivery truck collides with tank or piping.",
+      "barriers": [
+        {
+          "id": "b5",
+          "name": "Crash barriers",
+          "description": "Steel bollards around the tank area.",
+          "owner": "Facilities",
+          "type": "hardware",
+          "effectiveness": "fair",
+          "escalationFactors": []
+        },
+        {
+          "id": "b6",
+          "name": "Site traffic rules",
+          "description": "Speed limit and marshalled deliveries.",
+          "owner": "Site manager",
+          "type": "procedural",
+          "effectiveness": "poor",
+          "escalationFactors": []
+        }
+      ]
+    },
+    {
+      "id": "t4",
+      "name": "Hose failure during transfer",
+      "description": "Transfer hose ruptures or disconnects while loading.",
+      "barriers": [
+        {
+          "id": "b7",
+          "name": "Hose inspection and replacement",
+          "description": "Hoses tagged and replaced every 12 months.",
+          "owner": "Operations",
+          "type": "procedural",
+          "effectiveness": "unknown",
+          "escalationFactors": []
+        },
+        {
+          "id": "b8",
+          "name": "Breakaway coupling",
+          "description": "Closes both sides if the hose is pulled.",
+          "owner": "Operations",
+          "type": "hardware",
+          "effectiveness": "good",
+          "escalationFactors": []
+        }
+      ]
+    }
+  ],
+  "consequences": [
+    {
+      "id": "c1",
+      "name": "Jet fire",
+      "description": "Ignited release burns as a high-energy flame.",
+      "severity": "major",
+      "barriers": [
+        {
+          "id": "b9",
+          "name": "Emergency shutdown valves",
+          "description": "Remote-operated isolation of the tank.",
+          "owner": "Operations",
+          "type": "hardware",
+          "effectiveness": "good",
+          "escalationFactors": []
+        },
+        {
+          "id": "b10",
+          "name": "Fixed water deluge",
+          "description": "Cools adjacent equipment.",
+          "owner": "Fire team",
+          "type": "hardware",
+          "effectiveness": "fair",
+          "escalationFactors": []
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "name": "Vapour cloud explosion",
+      "description": "Delayed ignition of a gas cloud causes an explosion.",
+      "severity": "catastrophic",
+      "barriers": [
+        {
+          "id": "b11",
+          "name": "Gas detection",
+          "description": "Fixed detectors trigger alarm and shutdown.",
+          "owner": "Instrumentation",
+          "type": "hardware",
+          "effectiveness": "good",
+          "escalationFactors": []
+        },
+        {
+          "id": "b12",
+          "name": "Ignition source control",
+          "description": "Hot work permits and zoned equipment.",
+          "owner": "Site manager",
+          "type": "procedural",
+          "effectiveness": "fair",
+          "escalationFactors": []
+        }
+      ]
+    },
+    {
+      "id": "c3",
+      "name": "Injury to personnel",
+      "description": "Staff or contractors exposed to fire or gas.",
+      "severity": "major",
+      "barriers": [
+        {
+          "id": "b13",
+          "name": "Emergency response plan",
+          "description": "Drills held twice a year.",
+          "owner": "HSE",
+          "type": "human",
+          "effectiveness": "fair",
+          "escalationFactors": []
+        },
+        {
+          "id": "b14",
+          "name": "Muster and evacuation",
+          "description": "Alarm and marshalled muster points.",
+          "owner": "HSE",
+          "type": "human",
+          "effectiveness": "unknown",
+          "escalationFactors": []
+        }
+      ]
+    },
+    {
+      "id": "c4",
+      "name": "Environmental release",
+      "description": "Gas release to atmosphere.",
+      "severity": "minor",
+      "barriers": []
+    }
+  ]
+}
