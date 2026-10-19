@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bowtie risk analysis editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; font-family: "Segoe UI", system-ui, -apple-system, Arial, sans-serif; font-size: 14px; color: #1f2937; background: #f1f5f9; }
+  #toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; background: #0f172a; color: #fff; }
+  #toolbar .sep { width: 1px; height: 22px; background: #475569; margin: 0 4px; }
+  #toolbar .title { font-weight: 600; margin-right: 8px; }
+  #fileLabel { color: #cbd5e1; margin-left: auto; }
+  button { font: inherit; padding: 4px 10px; border: 1px solid #94a3b8; border-radius: 4px; background: #fff; color: #0f172a; cursor: pointer; }
+  button:hover:not(:disabled) { background: #e2e8f0; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.danger { border-color: #b91c1c; color: #b91c1c; }
+  button.primary { background: #2563eb; border-color: #1d4ed8; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #1d4ed8; }
+  #banners { display: flex; flex-direction: column; }
+  .banner { display: flex; gap: 8px; align-items: center; padding: 6px 12px; border-bottom: 1px solid #cbd5e1; background: #e0f2fe; }
+  .banner.error { background: #fee2e2; }
+  .banner.warn { background: #fef3c7; }
+  .banner.ok { background: #dcfce7; }
+  .banner .text { flex: 1; white-space: pre-wrap; }
+  #main { flex: 1; display: flex; min-height: 0; }
+  #canvas { flex: 1; position: relative; overflow: hidden; background: #fff; cursor: grab; touch-action: none; user-select: none; }
+  #canvas.panning { cursor: grabbing; }
+  #canvas svg { width: 100%; height: 100%; display: block; }
+  #canvas.dropping::after { content: "Drop a .json file to open it"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 24px; background: rgba(37,99,235,.15); border: 3px dashed #2563eb; }
+  #panel { width: 320px; overflow-y: auto; padding: 12px; background: #f8fafc; border-left: 1px solid #cbd5e1; }
+  #panel h2 { margin: 0 0 8px; font-size: 16px; }
+  #panel label { display: block; margin: 8px 0 2px; font-size: 12px; font-weight: 600; color: #475569; }
+  #panel input[type=text], #panel textarea, #panel select { width: 100%; font: inherit; padding: 4px 6px; border: 1px solid #94a3b8; border-radius: 4px; background: #fff; }
+  #panel textarea { min-height: 70px; resize: vertical; }
+  #panel .row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  #panel .hint { color: #64748b; font-size: 12px; margin-top: 8px; }
+  #panel .ef { border: 1px solid #cbd5e1; border-radius: 4px; padding: 6px; margin-top: 6px; background: #fff; }
+  #status { padding: 3px 10px; font-size: 12px; background: #e2e8f0; border-top: 1px solid #cbd5e1; color: #475569; }
+  .legend { display: inline-flex; gap: 8px; align-items: center; margin-left: 8px; font-size: 12px; color: #cbd5e1; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 3px; }
+
+  @media print {
+    @page { size: A4 landscape; margin: 10mm; }
+    html, body { height: auto; background: #fff; }
+    #toolbar, #banners, #panel, #status { display: none; }
+    #main { display: block; }
+    #canvas { position: static; overflow: visible; width: 100%; height: 180mm; border: 0; }
+    #canvas svg { width: 100%; height: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <span class="title">Bowtie editor</span>
+  <button id="btnNew" title="New diagram with example">New</button>
+  <button id="btnOpen">Open…</button>
+  <button id="btnSave" class="primary" title="Ctrl+S">Save</button>
+  <button id="btnSaveAs">Save as…</button>
+  <span class="sep"></span>
+  <button id="btnUndo" title="Ctrl+Z">Undo</button>
+  <button id="btnRedo" title="Ctrl+Y">Redo</button>
+  <span class="sep"></span>
+  <button id="btnAddThreat">+ Threat</button>
+  <button id="btnAddConsequence">+ Consequence</button>
+  <span class="sep"></span>
+  <button id="btnZoomIn" title="Zoom in">+</button>
+  <button id="btnZoomOut" title="Zoom out">−</button>
+  <button id="btnFit">Fit to screen</button>
+  <span class="sep"></span>
+  <button id="btnExportSvg">Export SVG</button>
+  <button id="btnExportPng">Export PNG</button>
+  <button id="btnPrint">Print / PDF</button>
+  <span class="legend">
+    <span><i style="background:#16a34a"></i>good</span>
+    <span><i style="background:#f59e0b"></i>fair</span>
+    <span><i style="background:#dc2626"></i>poor</span>
+    <span><i style="background:#9ca3af"></i>unknown</span>
+  </span>
+  <span id="fileLabel"></span>
+  <input id="fileInput" type="file" accept=".json,application/json" hidden>
+</div>
+<div id="banners"></div>
+<div id="main">
+  <div id="canvas"></div>
+  <div id="panel"></div>
+</div>
+<div id="status">Click an element to edit it. Mouse wheel zooms, dragging the background pans.</div>
+
+<script>
+"use strict";
+
+/* ==========================================================================
+   STATE / MODEL
+   The JSON model is the single source of truth. Everything else is derived.
+   ========================================================================== */
+
+const SCHEMA_VERSION = 1;
+const AUTOSAVE_KEY = "bowtie.autosave.v1";
+const SVG_NS = "http:" + "//www.w3.org/2000/svg";   // split so no URL literal appears in the file
+
+const BARRIER_TYPES = ["hardware", "human", "procedural", "other"];
+const EFFECTIVENESS = ["good", "fair", "poor", "unknown"];
+const SEVERITIES = ["", "minor", "moderate", "major", "catastrophic"];
+
+const EXAMPLE_MODEL = {"schemaVersion":1,"meta":{"title":"Loss of containment - LPG storage","author":"Process Safety Team","created":"2026-01-15T09:00:00.000Z","modified":"2026-01-15T09:00:00.000Z"},"hazard":{"id":"hz1","name":"Pressurised LPG","description":"Liquefied petroleum gas stored at 8 bar in a 50 m3 bulk tank."},"topEvent":{"id":"te1","name":"Loss of containment","description":"Uncontrolled release of LPG from the tank or its connected piping."},"threats":[{"id":"t1","name":"Corrosion of tank shell","description":"External or internal corrosion thins the shell wall over time.","barriers":[{"id":"b1","name":"Protective coating","description":"Epoxy coating, repainted every 5 years.","owner":"Maintenance","type":"hardware","effectiveness":"good","escalationFactors":[{"id":"e1","name":"Coating damaged during maintenance","description":"Scaffolding or tools scrape the coating.","barriers":[{"id":"eb1","name":"Post-work coating inspection","description":"Inspector signs off after each job.","owner":"Maintenance","type":"procedural","effectiveness":"fair","escalationFactors":[]}]}]},{"id":"b2","name":"Thickness inspection","description":"Ultrasonic wall thickness survey every 2 years.","owner":"Inspection","type":"procedural","effectiveness":"fair","escalationFactors":[]}]},{"id":"t2","name":"Overpressure","description":"Tank pressure exceeds design pressure, e.g. from heat or overfilling.","barriers":[{"id":"b3","name":"High-level alarm","description":"Alarm at 80% fill level.","owner":"Operations","type":"hardware","effectiveness":"good","escalationFactors":[]},{"id":"b4","name":"Pressure relief valve","description":"Spring-loaded PSV set at 10 bar.","owner":"Maintenance","type":"hardware","effectiveness":"good","escalationFactors":[{"id":"e2","name":"PSV stuck due to fouling","description":"Debris or corrosion prevents the valve from lifting.","barriers":[]}]}]},{"id":"t3","name":"Vehicle impact","description":"Delivery truck collides with tank or piping.","barriers":[{"id":"b5","name":"Crash barriers","description":"Steel bollards around the tank area.","owner":"Facilities","type":"hardware","effectiveness":"fair","escalationFactors":[]},{"id":"b6","name":"Site traffic rules","description":"Speed limit and marshalled deliveries.","owner":"Site manager","type":"procedural","effectiveness":"poor","escalationFactors":[]}]},{"id":"t4","name":"Hose failure during transfer","description":"Transfer hose ruptures or disconnects while loading.","barriers":[{"id":"b7","name":"Hose inspection and replacement","description":"Hoses tagged and replaced every 12 months.","owner":"Operations","type":"procedural","effectiveness":"unknown","escalationFactors":[]},{"id":"b8","name":"Breakaway coupling","description":"Closes both sides if the hose is pulled.","owner":"Operations","type":"hardware","effectiveness":"good","escalationFactors":[]}]}],"consequences":[{"id":"c1","name":"Jet fire","description":"Ignited release burns as a high-energy flame.","severity":"major","barriers":[{"id":"b9","name":"Emergency shutdown valves","description":"Remote-operated isolation of the tank.","owner":"Operations","type":"hardware","effectiveness":"good","escalationFactors":[]},{"id":"b10","name":"Fixed water deluge","description":"Cools adjacent equipment.","owner":"Fire team","type":"hardware","effectiveness":"fair","escalationFactors":[]}]},{"id":"c2","name":"Vapour cloud explosion","description":"Delayed ignition of a gas cloud causes an explosion.","severity":"catastrophic","barriers":[{"id":"b11","name":"Gas detection","description":"Fixed detectors trigger alarm and shutdown.","owner":"Instrumentation","type":"hardware","effectiveness":"good","escalationFactors":[]},{"id":"b12","name":"Ignition source control","description":"Hot work permits and zoned equipment.","owner":"Site manager","type":"procedural","effectiveness":"fair","escalationFactors":[]}]},{"id":"c3","name":"Injury to personnel","description":"Staff or contractors exposed to fire or gas.","severity":"major","barriers":[{"id":"b13","name":"Emergency response plan","description":"Drills held twice a year.","owner":"HSE","type":"human","effectiveness":"fair","escalationFactors":[]},{"id":"b14","name":"Muster and evacuation","description":"Alarm and marshalled muster points.","owner":"HSE","type":"human","effectiveness":"unknown","escalationFactors":[]}]},{"id":"c4","name":"Environmental release","description":"Gas release to atmosphere.","severity":"minor","barriers":[]}]};
+
+/** Application state (not part of the saved model). */
+const state = {
+  model: null,
+  selection: null,        // { kind: 'hazard'|'topEvent'|'threat'|'consequence'|'barrier', id }
+  savedJson: "",          // serialized model at last save/open, used for the dirty flag
+  fileHandle: null,       // File System Access handle, when available
+  fileName: "",
+  view: { x: 0, y: 0, k: 1 },
+  fitPending: true
+};
+
+function uid() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  } catch (e) { /* fall through */ }
+  return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+const nowIso = () => new Date().toISOString();
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+function newEscalationFactor(name = "New escalation factor") {
+  return { id: uid(), name, description: "", barriers: [] };
+}
+function newBarrier(name = "New barrier") {
+  return { id: uid(), name, description: "", owner: "", type: "hardware", effectiveness: "unknown", escalationFactors: [] };
+}
+function newThreat(name = "New threat") {
+  return { id: uid(), name, description: "", barriers: [] };
+}
+function newConsequence(name = "New consequence") {
+  return { id: uid(), name, description: "", severity: "", barriers: [] };
+}
+function emptyModel() {
+  const t = nowIso();
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    meta: { title: "Untitled bowtie", author: "", created: t, modified: t },
+    hazard: { id: uid(), name: "Hazard", description: "" },
+    topEvent: { id: uid(), name: "Top event", description: "" },
+    threats: [],
+    consequences: []
+  };
+}
+function exampleModel() {
+  const m = clone(EXAMPLE_MODEL);
+  m.meta.created = m.meta.modified = nowIso();
+  return m;
+}
+
+/* ---- validation / normalisation of loaded JSON ---- */
+
+/** Returns a list of human-readable problems (empty list = valid). */
+function validateModel(obj) {
+  const errs = [];
+  const isObj = (o) => o && typeof o === "object" && !Array.isArray(o);
+  if (!isObj(obj)) return ["The file does not contain a JSON object."];
+  if (obj.schemaVersion === undefined) errs.push("Missing \"schemaVersion\".");
+  else if (typeof obj.schemaVersion !== "number") errs.push("\"schemaVersion\" must be a number.");
+  else if (obj.schemaVersion > SCHEMA_VERSION) errs.push("File uses schemaVersion " + obj.schemaVersion + ", but this editor only supports up to " + SCHEMA_VERSION + ".");
+  else if (obj.schemaVersion < 1) errs.push("Unsupported schemaVersion " + obj.schemaVersion + ".");
+  if (!isObj(obj.hazard)) errs.push("\"hazard\" must be an object.");
+  if (!isObj(obj.topEvent)) errs.push("\"topEvent\" must be an object.");
+  for (const key of ["threats", "consequences"]) {
+    if (!Array.isArray(obj[key])) { errs.push("\"" + key + "\" must be an array."); continue; }
+    obj[key].forEach((line, i) => {
+      const where = key + "[" + i + "]";
+      if (!isObj(line)) { errs.push(where + " must be an object."); return; }
+      if (typeof line.name !== "string") errs.push(where + ".name must be a string.");
+      if (line.barriers !== undefined && !Array.isArray(line.barriers)) { errs.push(where + ".barriers must be an array."); return; }
+      (line.barriers || []).forEach((b, j) => {
+        const bw = where + ".barriers[" + j + "]";
+        if (!isObj(b)) { errs.push(bw + " must be an object."); return; }
+        if (typeof b.name !== "string") errs.push(bw + ".name must be a string.");
+        if (b.escalationFactors !== undefined && !Array.isArray(b.escalationFactors)) { errs.push(bw + ".escalationFactors must be an array."); return; }
+        (b.escalationFactors || []).forEach((e, n) => {
+          if (!isObj(e)) errs.push(bw + ".escalationFactors[" + n + "] must be an object.");
+          else if (e.barriers !== undefined && (!Array.isArray(e.barriers) || e.barriers.some((x) => !isObj(x)))) errs.push(bw + ".escalationFactors[" + n + "].barriers must be an array of objects.");
+        });
+      });
+    });
+  }
+  return errs.slice(0, 12);
+}
+
+const str = (v, d = "") => (typeof v === "string" ? v : d);
+const pick = (v, list, d) => (list.includes(v) ? v : d);
+
+function normEscalation(e) {
+  return {
+    id: str(e.id) || uid(), name: str(e.name), description: str(e.description),
+    barriers: (Array.isArray(e.barriers) ? e.barriers : []).map(normBarrier)
+  };
+}
+function normBarrier(b) {
+  return {
+    id: str(b.id) || uid(), name: str(b.name), description: str(b.description), owner: str(b.owner),
+    type: pick(b.type, BARRIER_TYPES, "other"), effectiveness: pick(b.effectiveness, EFFECTIVENESS, "unknown"),
+    escalationFactors: (Array.isArray(b.escalationFactors) ? b.escalationFactors : []).map(normEscalation)
+  };
+}
+/** Fills defaults so the rest of the app can rely on a complete model. Idempotent for valid models. */
+function normalizeModel(o) {
+  const meta = o.meta && typeof o.meta === "object" ? o.meta : {};
+  const simple = (n) => ({ id: str(n.id) || uid(), name: str(n.name), description: str(n.description) });
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    meta: { title: str(meta.title), author: str(meta.author), created: str(meta.created), modified: str(meta.modified) },
+    hazard: simple(o.hazard),
+    topEvent: simple(o.topEvent),
+    threats: o.threats.map((t) => ({ ...simple(t), barriers: (t.barriers || []).map(normBarrier) })),
+    consequences: o.consequences.map((c) => ({
+      ...simple(c), severity: str(c.severity), barriers: (c.barriers || []).map(normBarrier)
+    }))
+  };
+}
+
+/* ---- model queries ---- */
+
+/** Finds an element of the model by selection. Returns { item, list, index, line } or null. */
+function findItem(sel, model = state.model) {
+  if (!sel) return null;
+  if (sel.kind === "hazard") return { item: model.hazard };
+  if (sel.kind === "topEvent") return { item: model.topEvent };
+  if (sel.kind === "threat" || sel.kind === "consequence") {
+    const list = sel.kind === "threat" ? model.threats : model.consequences;
+    const index = list.findIndex((x) => x.id === sel.id);
+    return index < 0 ? null : { item: list[index], list, index };
+  }
+  if (sel.kind === "barrier") {
+    for (const line of [...model.threats, ...model.consequences]) {
+      const index = line.barriers.findIndex((b) => b.id === sel.id);
+      if (index >= 0) return { item: line.barriers[index], list: line.barriers, index, line };
+    }
+  }
+  return null;
+}
+const lineKindOf = (line) => (state.model.threats.includes(line) ? "threat" : "consequence");
+
+
+/* ==========================================================================
+   LAYOUT
+   Pure function: model -> positioned nodes and links. No DOM access.
+   ========================================================================== */
+
+const L = {
+  nodeW: 170, nodeH: 64,        // threats / consequences
+  topW: 190, topH: 100,         // top event
+  hazW: 230, hazH: 64,          // hazard
+  barW: 124, barH: 56,          // barriers
+  gap: 70,                      // minimum horizontal gap between barriers
+  rowH: 110,                    // vertical space per threat/consequence
+  hazardZone: 150,              // vertical space above the top event for the hazard
+  pad: 40
+};
+
+/**
+ * layout(model) -> { nodes, links, bounds }
+ *  node: { kind, id, x, y, w, h, data, lineId? }   (x,y = top-left)
+ *  link: { points: [[x, y], ...], arrow }
+ * Threats are stacked on the left, consequences on the right, the top event is centred
+ * vertically between them, the hazard sits above it. Barriers sit in aligned columns
+ * along each threat/consequence line, ordered from the outer node towards the top event.
+ */
+function layout(model) {
+  const nodes = [], links = [];
+  const nT = model.threats.length, nC = model.consequences.length;
+  const rows = Math.max(nT, nC, 1);
+  const H = rows * L.rowH;
+  const maxB = (lines) => Math.max(1, ...lines.map((l) => l.barriers.length));
+  const zoneW = (n) => n * L.barW + (n + 1) * L.gap;
+  const leftZone = zoneW(maxB(model.threats));
+  const rightZone = zoneW(maxB(model.consequences));
+
+  const topX = L.nodeW + leftZone;             // left edge of top event
+  const topY = L.hazardZone + H / 2 - L.topH / 2;
+  const cx = topX + L.topW / 2, cy = topY + L.topH / 2;
+  const rightX = topX + L.topW + rightZone;    // left edge of consequences
+
+  nodes.push({ kind: "hazard", id: model.hazard.id, x: cx - L.hazW / 2, y: 0, w: L.hazW, h: L.hazH, data: model.hazard });
+  nodes.push({ kind: "topEvent", id: model.topEvent.id, x: topX, y: topY, w: L.topW, h: L.topH, data: model.topEvent });
+  links.push({ points: [[cx, L.hazH], [cx, topY]], arrow: false });
+
+  const lineY = (i, n) => L.hazardZone + H / 2 + (i - (n - 1) / 2) * L.rowH;
+
+  /* Each line runs horizontally at its own row height through aligned barrier columns,
+     and bends towards the top event only in the gap next to it. */
+  function placeLine(kind, line, i, n, nodeX) {
+    const ny = lineY(i, n);
+    nodes.push({ kind, id: line.id, x: nodeX, y: ny - L.nodeH / 2, w: L.nodeW, h: L.nodeH, data: line });
+    const col = (k) => (kind === "threat" ? L.nodeW : topX + L.topW) + L.gap + L.barW / 2 + k * (L.barW + L.gap);
+    const pts = kind === "threat"
+      ? [[L.nodeW, ny], [topX - L.gap, ny], [topX, cy]]
+      : [[topX + L.topW, cy], [topX + L.topW + L.gap, ny], [nodeX, ny]];
+    links.push({ points: pts, arrow: true });
+    line.barriers.forEach((b, k) => {
+      nodes.push({ kind: "barrier", id: b.id, x: col(k) - L.barW / 2, y: ny - L.barH / 2, w: L.barW, h: L.barH, data: b, lineId: line.id, lineKind: kind });
+    });
+  }
+  model.threats.forEach((t, i) => placeLine("threat", t, i, nT, 0));
+  model.consequences.forEach((c, i) => placeLine("consequence", c, i, nC, rightX));
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of nodes) {
+    minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
+  }
+  const bounds = { x: minX - L.pad, y: minY - L.pad, w: maxX - minX + 2 * L.pad, h: maxY - minY + 2 * L.pad };
+  return { nodes, links, bounds };
+}
+
+
+/* ==========================================================================
+   RENDER
+   Pure-ish function: positioned layout -> SVG element tree. Uses presentation
+   attributes (not CSS classes) so an exported SVG is fully self-contained.
+   ========================================================================== */
+
+const EFF_COLORS = {
+  good: { fill: "#16a34a", text: "#ffffff" },
+  fair: { fill: "#f59e0b", text: "#1f2937" },
+  poor: { fill: "#dc2626", text: "#ffffff" },
+  unknown: { fill: "#9ca3af", text: "#1f2937" }
+};
+const TYPE_TAGS = { hardware: "HW", human: "HU", procedural: "PR", other: "OT" };
+const FONT = "Segoe UI, Arial, sans-serif";
+
+function svgEl(name, attrs = {}, children = []) {
+  const e = document.createElementNS(SVG_NS, name);
+  for (const k in attrs) if (attrs[k] !== undefined && attrs[k] !== null) e.setAttribute(k, attrs[k]);
+  for (const c of [].concat(children)) if (c) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  return e;
+}
+
+/** Word-wraps text to at most maxLines lines of maxChars characters. */
+function wrapText(text, maxChars, maxLines) {
+  const words = (text || "").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = "";
+  for (let w of words) {
+    while (w.length > maxChars) {                       // break very long words
+      if (cur) { lines.push(cur); cur = ""; }
+      lines.push(w.slice(0, maxChars)); w = w.slice(maxChars);
+    }
+    if (!cur) cur = w;
+    else if ((cur + " " + w).length <= maxChars) cur += " " + w;
+    else { lines.push(cur); cur = w; }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > maxLines) {
+    lines.length = maxLines;
+    lines[maxLines - 1] = lines[maxLines - 1].slice(0, Math.max(0, maxChars - 1)) + "…";
+  }
+  return lines.length ? lines : [""];
+}
+
+function textBlock(cx, cy, lines, size, fill, weight = "600") {
+  const lh = size * 1.2;
+  const y0 = cy - ((lines.length - 1) * lh) / 2;
+  return svgEl("text", {
+    x: cx, y: y0, "text-anchor": "middle", "dominant-baseline": "central",
+    "font-family": FONT, "font-size": size, "font-weight": weight, fill
+  }, lines.map((ln, i) => svgEl("tspan", { x: cx, dy: i === 0 ? 0 : lh }, ln)));
+}
+
+function renderNode(n, selected) {
+  const d = n.data, cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+  const sel = selected && selected.kind === n.kind && selected.id === n.id;
+  const stroke = (c) => ({ stroke: sel ? "#2563eb" : c, "stroke-width": sel ? 4 : 2 });
+  const name = d.name || "(unnamed)";
+  const g = svgEl("g", { "data-kind": n.kind, "data-id": n.id, style: "cursor:pointer" });
+  g.appendChild(svgEl("title", {}, name + (d.description ? "\n" + d.description : "")));
+
+  if (n.kind === "hazard") {                           // hexagon, warning yellow
+    const s = 22, r = n.x + n.w, b = n.y + n.h;
+    const pts = [[n.x + s, n.y], [r - s, n.y], [r, cy], [r - s, b], [n.x + s, b], [n.x, cy]].map((p) => p.join(",")).join(" ");
+    g.appendChild(svgEl("polygon", { points: pts, fill: "#fde047", ...stroke("#a16207") }));
+    g.appendChild(textBlock(cx, cy, wrapText(name, 26, 2), 14, "#422006"));
+  } else if (n.kind === "topEvent") {                  // dark red ellipse (the knot)
+    g.appendChild(svgEl("ellipse", { cx, cy, rx: n.w / 2, ry: n.h / 2, fill: "#991b1b", ...stroke("#450a0a") }));
+    g.appendChild(textBlock(cx, cy, wrapText(name, 20, 3), 14, "#ffffff"));
+  } else if (n.kind === "threat") {                    // orange rounded rectangle
+    g.appendChild(svgEl("rect", { x: n.x, y: n.y, width: n.w, height: n.h, rx: 8, fill: "#ffedd5", ...stroke("#c2410c") }));
+    g.appendChild(textBlock(cx, cy, wrapText(name, 22, 3), 13, "#7c2d12"));
+  } else if (n.kind === "consequence") {               // pink rectangle, folded corner via bold left edge
+    g.appendChild(svgEl("rect", { x: n.x, y: n.y, width: n.w, height: n.h, rx: 3, fill: "#fee2e2", ...stroke("#7f1d1d") }));
+    g.appendChild(svgEl("rect", { x: n.x, y: n.y, width: 8, height: n.h, fill: "#7f1d1d" }));
+    const lines = wrapText(name, 20, d.severity ? 2 : 3);
+    g.appendChild(textBlock(cx + 4, cy - (d.severity ? 6 : 0), lines, 13, "#450a0a"));
+    if (d.severity) g.appendChild(svgEl("text", {
+      x: cx + 4, y: n.y + n.h - 9, "text-anchor": "middle", "font-family": FONT, "font-size": 10, fill: "#991b1b", "font-style": "italic"
+    }, d.severity));
+  } else if (n.kind === "barrier") {                   // coloured by effectiveness
+    const c = EFF_COLORS[d.effectiveness] || EFF_COLORS.unknown;
+    g.appendChild(svgEl("rect", { x: n.x, y: n.y, width: n.w, height: n.h, rx: 4, fill: c.fill, ...stroke("#1f2937") }));
+    g.appendChild(textBlock(cx, cy + 4, wrapText(d.name || "(unnamed)", 17, 3), 12, c.text));
+    g.appendChild(svgEl("text", {
+      x: n.x + 5, y: n.y + 10, "font-family": FONT, "font-size": 9, "font-weight": "700", fill: c.text, opacity: 0.85
+    }, TYPE_TAGS[d.type] || "OT"));
+    const ef = (d.escalationFactors || []).length;
+    if (ef) {
+      g.appendChild(svgEl("circle", { cx: n.x + n.w, cy: n.y, r: 10, fill: "#1f2937", stroke: "#ffffff", "stroke-width": 1.5 }));
+      g.appendChild(svgEl("text", {
+        x: n.x + n.w, y: n.y, "text-anchor": "middle", "dominant-baseline": "central",
+        "font-family": FONT, "font-size": 10, "font-weight": "700", fill: "#ffffff"
+      }, String(ef)));
+    }
+  }
+  return g;
+}
+
+/**
+ * render(positioned, opts) -> <svg>.
+ * opts.selected: current selection (highlight). opts.standalone: add background + viewBox
+ * covering the whole diagram (used by exports).
+ */
+function render(pos, opts = {}) {
+  const svg = svgEl("svg", { role: "img", "aria-label": "Bowtie diagram", "font-family": FONT });
+  svg.appendChild(svgEl("defs", {}, svgEl("marker", {
+    id: "arrow", viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 8, markerHeight: 8, orient: "auto-start-reverse"
+  }, svgEl("path", { d: "M0,0 L10,5 L0,10 z", fill: "#475569" }))));
+  if (opts.standalone) {
+    const b = pos.bounds;
+    svg.setAttribute("viewBox", [b.x, b.y, b.w, b.h].join(" "));
+    svg.setAttribute("width", b.w); svg.setAttribute("height", b.h);
+    svg.appendChild(svgEl("rect", { x: b.x, y: b.y, width: b.w, height: b.h, fill: "#ffffff" }));
+  }
+  const vp = svgEl("g", { id: "viewport" });
+  for (const l of pos.links) {
+    vp.appendChild(svgEl("polyline", {
+      points: l.points.map((p) => p.join(",")).join(" "), fill: "none", stroke: "#475569", "stroke-width": 2.5, "stroke-linejoin": "round",
+      "marker-end": l.arrow ? "url(#arrow)" : null
+    }));
+  }
+  // barriers last so they sit on top of the lines
+  const order = { hazard: 0, topEvent: 1, threat: 2, consequence: 2, barrier: 3 };
+  [...pos.nodes].sort((a, b) => order[a.kind] - order[b.kind]).forEach((n) => vp.appendChild(renderNode(n, opts.selected)));
+  svg.appendChild(vp);
+  return svg;
+}
+
+
+/* ==========================================================================
+   HISTORY (undo / redo)
+   Snapshots of the serialized model. mutate() records the state before a change.
+   Typing into a field is coalesced: one undo step per focus session on that field.
+   ========================================================================== */
+
+const history = { past: [], future: [], coalesceKey: null, limit: 200 };
+
+function snapshot() { return JSON.stringify(state.model); }
+
+/** Applies fn(model) as one undoable change, then re-renders and autosaves. */
+function mutate(fn, opts = {}) {
+  const before = snapshot();
+  if (!(opts.coalesceKey && history.coalesceKey === opts.coalesceKey)) {
+    history.past.push(before);
+    if (history.past.length > history.limit) history.past.shift();
+  }
+  history.coalesceKey = opts.coalesceKey || null;
+  history.future.length = 0;
+  fn(state.model);
+  afterChange(opts);
+}
+function endCoalescing() { history.coalesceKey = null; }
+
+function restoreSnapshot(json) {
+  state.model = JSON.parse(json);
+  if (state.selection && !findItem(state.selection)) state.selection = null;
+  history.coalesceKey = null;
+  afterChange({});
+}
+function undo() {
+  if (!history.past.length) return;
+  history.future.push(snapshot());
+  restoreSnapshot(history.past.pop());
+}
+function redo() {
+  if (!history.future.length) return;
+  history.past.push(snapshot());
+  restoreSnapshot(history.future.pop());
+}
+function resetHistory() { history.past.length = 0; history.future.length = 0; history.coalesceKey = null; }
+
+
+/* ==========================================================================
+   EDITING
+   All edits go through mutate(). Functions here only touch the model + selection.
+   ========================================================================== */
+
+function select(sel) {
+  state.selection = sel;
+  endCoalescing();
+  renderDiagram();
+  renderPanel();
+}
+
+function addThreat() {
+  const t = newThreat();
+  mutate((m) => m.threats.push(t));
+  select({ kind: "threat", id: t.id });
+}
+function addConsequence() {
+  const c = newConsequence();
+  mutate((m) => m.consequences.push(c));
+  select({ kind: "consequence", id: c.id });
+}
+/** Adds a barrier to the line of the current selection (threat, consequence or one of its barriers). */
+function addBarrier() {
+  const f = findItem(state.selection);
+  if (!f) return;
+  const line = state.selection.kind === "barrier" ? f.line : f.item;
+  const b = newBarrier();
+  mutate(() => {
+    const at = state.selection.kind === "barrier" ? f.index + 1 : line.barriers.length;
+    line.barriers.splice(at, 0, b);
+  });
+  select({ kind: "barrier", id: b.id });
+}
+function moveBarrier(delta) {
+  const f = findItem(state.selection);
+  if (!f || state.selection.kind !== "barrier") return;
+  const j = f.index + delta;
+  if (j < 0 || j >= f.list.length) return;
+  mutate(() => { const [b] = f.list.splice(f.index, 1); f.list.splice(j, 0, b); });
+  renderPanel();
+}
+function deleteSelected() {
+  const f = findItem(state.selection);
+  if (!f || !f.list) return;
+  mutate(() => f.list.splice(f.index, 1));
+  state.selection = null;
+  renderDiagram();
+  renderPanel();
+}
+function describeSelection() {
+  const f = findItem(state.selection);
+  if (!f) return "";
+  const n = f.item.name || "(unnamed)";
+  let extra = "";
+  if (state.selection.kind !== "barrier" && f.item.barriers.length) extra = " and its " + f.item.barriers.length + " barrier(s)";
+  return "Delete " + state.selection.kind + " \"" + n + "\"" + extra + "?";
+}
+function requestDelete() {
+  const f = findItem(state.selection);
+  if (!f || !f.list) return;
+  showBanner({ id: "confirm", level: "warn", text: describeSelection(), buttons: [
+    { label: "Delete", danger: true, onClick: deleteSelected },
+    { label: "Cancel" }
+  ] });
+}
+
+
+/* ==========================================================================
+   PERSISTENCE (file I/O, autosave)
+   Primary storage = user's own .json file. File System Access API when present,
+   otherwise <input type=file> and Blob download. localStorage = recovery only.
+   ========================================================================== */
+
+const hasOpenPicker = () => typeof window.showOpenFilePicker === "function";
+const hasSavePicker = () => typeof window.showSaveFilePicker === "function";
+const JSON_PICKER_TYPES = [{ description: "Bowtie JSON", accept: { "application/json": [".json"] } }];
+
+const serialize = () => JSON.stringify(state.model, null, 2);
+const isDirty = () => JSON.stringify(state.model, null, 2) !== state.savedJson;
+
+/** Parses + validates text and installs it as the current model. Returns true on success. */
+function loadFromText(text, name, handle) {
+  let obj;
+  try { obj = JSON.parse(text); }
+  catch (e) { showBanner({ level: "error", text: "Could not read \"" + (name || "file") + "\": not valid JSON (" + e.message + ").", sticky: true }); return false; }
+  const errs = validateModel(obj);
+  if (errs.length) {
+    showBanner({ level: "error", text: "Cannot open \"" + (name || "file") + "\":\n• " + errs.join("\n• "), sticky: true });
+    return false;
+  }
+  state.model = normalizeModel(obj);
+  state.selection = null;
+  state.fileHandle = handle || null;
+  state.fileName = name || "";
+  state.savedJson = serialize();
+  resetHistory();
+  state.fitPending = true;
+  clearBanner("confirm");
+  afterChange({ skipAutosave: true });
+  showBanner({ level: "ok", text: "Opened \"" + (name || "file") + "\"." });
+  return true;
+}
+
+/** Runs cb immediately, or after the user confirms discarding unsaved changes. */
+function guardDirty(cb) {
+  if (!isDirty()) return cb();
+  showBanner({ id: "confirm", level: "warn", text: "You have unsaved changes. Discard them?", buttons: [
+    { label: "Discard", danger: true, onClick: cb },
+    { label: "Cancel" }
+  ] });
+}
+
+function newDiagram() {
+  guardDirty(() => {
+    state.model = exampleModel();
+    state.selection = null;
+    state.fileHandle = null;
+    state.fileName = "";
+    state.savedJson = "";             // never saved, so counts as unsaved
+    resetHistory();
+    state.fitPending = true;
+    afterChange({});
+    showBanner({ level: "ok", text: "New diagram created from the example." });
+  });
+}
+
+async function openFile() {
+  guardDirty(async () => {
+   try {
+    if (hasOpenPicker()) {
+      try {
+        const [handle] = await window.showOpenFilePicker({ types: JSON_PICKER_TYPES, multiple: false });
+        const file = await handle.getFile();
+        loadFromText(await file.text(), file.name, handle);
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+        // Blocked by policy or otherwise failing: fall back to the classic input
+      }
+    }
+    $("fileInput").value = "";
+    $("fileInput").click();
+   } catch (e) {
+    showBanner({ level: "error", text: "Could not open the file (" + (e && e.message) + ").", sticky: true });
+   }
+  });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+const safeName = (s) => (s || "bowtie").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") || "bowtie";
+
+function markSaved(name, handle) {
+  state.savedJson = serialize();
+  if (name) state.fileName = name;
+  if (handle !== undefined) state.fileHandle = handle;
+  updateChrome();
+}
+
+async function saveFile() {
+  if (!state.fileHandle) return saveFileAs();
+  try {
+    state.model.meta.modified = nowIso();
+    const w = await state.fileHandle.createWritable();
+    await w.write(serialize());
+    await w.close();
+    markSaved();
+    showBanner({ level: "ok", text: "Saved \"" + state.fileName + "\"." });
+  } catch (e) {
+    showBanner({ level: "error", text: "Could not write to the file (" + (e && e.message) + "). Try Save as…", sticky: true });
+  }
+}
+
+async function saveFileAs() {
+  const suggested = safeName(state.model.meta.title) + ".json";
+  if (hasSavePicker()) {
+    try {
+      const handle = await window.showSaveFilePicker({ suggestedName: suggested, types: JSON_PICKER_TYPES });
+      state.model.meta.modified = nowIso();
+      const w = await handle.createWritable();
+      await w.write(serialize());
+      await w.close();
+      markSaved(handle.name, handle);
+      showBanner({ level: "ok", text: "Saved \"" + handle.name + "\"." });
+      return;
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+      showBanner({ level: "warn", text: "File picker unavailable (" + (e && e.message) + "); downloading instead." });
+    }
+  }
+  state.model.meta.modified = nowIso();
+  downloadBlob(new Blob([serialize()], { type: "application/json" }), suggested);
+  markSaved(suggested, null);
+  showBanner({ level: "ok", text: "Downloaded \"" + suggested + "\" (browser download; use Open… to load it again)." });
+}
+
+/* ---- autosave / recovery (localStorage, best effort) ---- */
+
+function autosave() {
+  try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({ savedAt: nowIso(), json: serialize() })); }
+  catch (e) { /* storage blocked or full: ignore, this is recovery only */ }
+}
+function readAutosave() {
+  try {
+    const raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    const obj = JSON.parse(rec.json);
+    return validateModel(obj).length ? null : { savedAt: rec.savedAt, model: normalizeModel(obj) };
+  } catch (e) { return null; }
+}
+function clearAutosave() { try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) { /* ignore */ } }
+
+function offerRestore() {
+  const rec = readAutosave();
+  if (!rec) return;
+  const when = rec.savedAt ? new Date(rec.savedAt).toLocaleString() : "earlier";
+  showBanner({ id: "restore", level: "warn", sticky: true, text: "A recovered copy from " + when + " was found (\"" + (rec.model.meta.title || "Untitled") + "\"). Restore it?", buttons: [
+    { label: "Restore", onClick: () => {
+      state.model = rec.model; state.selection = null; state.fileHandle = null; state.fileName = "";
+      state.savedJson = ""; resetHistory(); state.fitPending = true; afterChange({});
+    } },
+    { label: "Discard", onClick: clearAutosave }
+  ] });
+}
+
+/* ---- drag and drop ---- */
+
+async function handleDrop(ev) {
+  ev.preventDefault();
+  $("canvas").classList.remove("dropping");
+  const item = ev.dataTransfer && ev.dataTransfer.items && ev.dataTransfer.items[0];
+  const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (!file) return;
+  if (!/\.json$/i.test(file.name)) { showBanner({ level: "error", text: "\"" + file.name + "\" is not a .json file." }); return; }
+  let handle = null;
+  try { if (item && typeof item.getAsFileSystemHandle === "function") handle = await item.getAsFileSystemHandle(); } catch (e) { handle = null; }
+  const text = await file.text();
+  guardDirty(() => loadFromText(text, file.name, handle && handle.kind === "file" ? handle : null));
+}
+
+
+/* ==========================================================================
+   EXPORT
+   ========================================================================== */
+
+function buildExportSvg() {
+  const svg = render(layout(state.model), { standalone: true });
+  const serializer = new XMLSerializer();
+  return { svg, text: '<?xml version="1.0" encoding="UTF-8"?>\n' + serializer.serializeToString(svg), width: Number(svg.getAttribute("width")), height: Number(svg.getAttribute("height")) };
+}
+function exportSvg() {
+  const { text } = buildExportSvg();
+  downloadBlob(new Blob([text], { type: "image/svg+xml" }), safeName(state.model.meta.title) + ".svg");
+  showBanner({ level: "ok", text: "SVG exported." });
+}
+function exportPng() {
+  const { text, width, height } = buildExportSvg();
+  const scale = 2;
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width * scale); canvas.height = Math.round(height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const name = safeName(state.model.meta.title) + ".png";
+      if (canvas.toBlob) canvas.toBlob((b) => { if (b) { downloadBlob(b, name); showBanner({ level: "ok", text: "PNG exported." }); } else pngFail(); }, "image/png");
+      else { const a = document.createElement("a"); a.href = canvas.toDataURL("image/png"); a.download = name; a.click(); }
+    } catch (e) { pngFail(e); }
+  };
+  img.onerror = () => pngFail();
+  img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(text);
+}
+function pngFail(e) {
+  showBanner({ level: "error", text: "PNG export failed" + (e && e.message ? " (" + e.message + ")" : "") + ". Use Export SVG or Print / PDF instead.", sticky: true });
+}
+function printDiagram() {
+  window.print();
+}
+
+
+/* ==========================================================================
+   UI WIRING
+   DOM glue: canvas rendering, zoom/pan, side panel, banners, events.
+   ========================================================================== */
+
+const $ = (id) => document.getElementById(id);
+
+/** Central hook after any model change. */
+function afterChange(opts) {
+  renderDiagram();
+  renderPanel(opts.keepPanel);
+  if (!opts.skipAutosave) autosave();
+  updateChrome();
+}
+
+/* ---- canvas ---- */
+
+function applyView() {
+  const vp = $("viewport");
+  if (vp) vp.setAttribute("transform", "translate(" + state.view.x + " " + state.view.y + ") scale(" + state.view.k + ")");
+}
+function renderDiagram() {
+  const pos = layout(state.model);
+  state.pos = pos;
+  const svg = render(pos, { selected: state.selection });
+  $("canvas").replaceChildren(svg);
+  if (state.fitPending) { fitToScreen(); state.fitPending = false; } else applyView();
+}
+function fitToScreen() {
+  const r = $("canvas").getBoundingClientRect();
+  const b = (state.pos || layout(state.model)).bounds;
+  if (!r.width || !r.height) return;
+  const k = Math.min(r.width / b.w, r.height / b.h, 1.5);
+  state.view = { k, x: (r.width - b.w * k) / 2 - b.x * k, y: (r.height - b.h * k) / 2 - b.y * k };
+  applyView();
+}
+function zoomAt(factor, px, py) {
+  const v = state.view;
+  const k = Math.min(4, Math.max(0.1, v.k * factor));
+  const f = k / v.k;
+  state.view = { k, x: px - (px - v.x) * f, y: py - (py - v.y) * f };
+  applyView();
+}
+function zoomCenter(factor) {
+  const r = $("canvas").getBoundingClientRect();
+  zoomAt(factor, r.width / 2, r.height / 2);
+}
+
+function wireCanvas() {
+  const c = $("canvas");
+  c.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = c.getBoundingClientRect();
+    zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+
+  let drag = null;
+  c.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const hit = e.target.closest && e.target.closest("[data-kind]");
+    drag = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y, moved: false, hit };
+    try { c.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  });
+  c.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) > 4) { drag.moved = true; c.classList.add("panning"); }
+    if (drag.moved) { state.view.x = drag.vx + dx; state.view.y = drag.vy + dy; applyView(); }
+  });
+  const end = (e) => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    c.classList.remove("panning");
+    if (d.moved || e.type === "pointercancel") return;
+    if (d.hit) select({ kind: d.hit.getAttribute("data-kind"), id: d.hit.getAttribute("data-id") });
+    else select(null);
+  };
+  c.addEventListener("pointerup", end);
+  c.addEventListener("pointercancel", end);
+
+  // drag and drop of a .json file
+  document.addEventListener("dragover", (e) => {
+    if (e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files")) { e.preventDefault(); c.classList.add("dropping"); }
+  });
+  document.addEventListener("dragleave", (e) => { if (!e.relatedTarget) c.classList.remove("dropping"); });
+  document.addEventListener("drop", handleDrop);
+}
+
+/* ---- side panel ---- */
+
+function field(parent, label, value, onInput, opts = {}) {
+  const wrap = document.createElement("div");
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  let input;
+  if (opts.options) {
+    input = document.createElement("select");
+    for (const o of opts.options) {
+      const op = document.createElement("option");
+      op.value = o; op.textContent = o === "" ? "(none)" : o;
+      input.appendChild(op);
+    }
+    input.value = value;
+    input.addEventListener("change", () => mutate(() => onInput(input.value)));
+  } else {
+    input = document.createElement(opts.multiline ? "textarea" : "input");
+    if (!opts.multiline) input.type = "text";
+    input.value = value;
+    const key = opts.key || label;
+    input.addEventListener("input", () => mutate(() => onInput(input.value), { coalesceKey: key, keepPanel: true }));
+    input.addEventListener("blur", endCoalescing);
+  }
+  wrap.append(lab, input);
+  parent.appendChild(wrap);
+  return input;
+}
+function button(parent, text, onClick, cls) {
+  const b = document.createElement("button");
+  b.textContent = text;
+  if (cls) b.className = cls;
+  b.addEventListener("click", onClick);
+  parent.appendChild(b);
+  return b;
+}
+function heading(parent, text) {
+  const h = document.createElement("h2");
+  h.textContent = text;
+  parent.appendChild(h);
+}
+function hint(parent, text) {
+  const p = document.createElement("div");
+  p.className = "hint"; p.textContent = text;
+  parent.appendChild(p);
+}
+
+const KIND_LABELS = { hazard: "Hazard", topEvent: "Top event", threat: "Threat", consequence: "Consequence", barrier: "Barrier" };
+
+function renderPanel(keep) {
+  const panel = $("panel");
+  // While typing in the panel, keep the DOM (and caret) untouched.
+  if (keep && panel.contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  panel.replaceChildren();
+  const sel = state.selection;
+  const f = findItem(sel);
+  const m = state.model;
+
+  if (!f) {
+    heading(panel, "Diagram");
+    const key = (k) => "meta." + k;
+    field(panel, "Title", m.meta.title, (v) => (m.meta.title = v), { key: key("title") });
+    field(panel, "Author", m.meta.author, (v) => (m.meta.author = v), { key: key("author") });
+    hint(panel, "Created: " + (m.meta.created || "-") + "\nModified: " + (m.meta.modified || "-"));
+    hint(panel, "Click any element in the diagram to edit it. Use + Threat / + Consequence to add lines, then select a line to add barriers.");
+    return;
+  }
+
+  const it = f.item;
+  heading(panel, KIND_LABELS[sel.kind]);
+  const k = (n) => sel.id + "." + n;
+  // Setters re-find the item so they stay valid after undo/redo replaced the model objects.
+  const set = (prop) => (v) => { const cur = findItem(sel); if (cur) cur.item[prop] = v; };
+
+  field(panel, "Name", it.name, set("name"), { key: k("name") });
+  field(panel, "Description", it.description, set("description"), { key: k("desc"), multiline: true });
+
+  if (sel.kind === "consequence") field(panel, "Severity", it.severity, set("severity"), { options: SEVERITIES });
+
+  if (sel.kind === "barrier") {
+    field(panel, "Owner", it.owner, set("owner"), { key: k("owner") });
+    field(panel, "Type", it.type, set("type"), { options: BARRIER_TYPES });
+    field(panel, "Effectiveness", it.effectiveness, set("effectiveness"), { options: EFFECTIVENESS });
+    renderEscalation(panel, sel, it);
+  }
+
+  const row = document.createElement("div");
+  row.className = "row";
+  if (sel.kind === "threat" || sel.kind === "consequence" || sel.kind === "barrier") {
+    button(row, "+ Add barrier", addBarrier);
+  }
+  if (sel.kind === "barrier") {
+    const l = button(row, "◀ Move left", () => moveBarrier(-1));
+    const r = button(row, "Move right ▶", () => moveBarrier(1));
+    l.disabled = f.index === 0;
+    r.disabled = f.index === f.list.length - 1;
+  }
+  if (f.list) button(row, "Delete", requestDelete, "danger");
+  panel.appendChild(row);
+
+  if (sel.kind === "barrier") hint(panel, "Barriers are ordered from the " + (lineKindOf(f.line) === "threat" ? "threat towards" : "top event towards") + " the " + (lineKindOf(f.line) === "threat" ? "top event." : "consequence."));
+  if (sel.kind === "hazard" || sel.kind === "topEvent") hint(panel, "This element is required and cannot be deleted.");
+}
+
+/** Escalation factors of the selected barrier (data model supports nested barriers; the UI edits name/description). */
+function renderEscalation(panel, sel, barrier) {
+  const h = document.createElement("label");
+  h.textContent = "Escalation factors";
+  panel.appendChild(h);
+  barrier.escalationFactors.forEach((ef) => {
+    const box = document.createElement("div");
+    box.className = "ef";
+    const efSet = (prop) => (v) => {
+      const cur = findItem(sel);
+      const e = cur && cur.item.escalationFactors.find((x) => x.id === ef.id);
+      if (e) e[prop] = v;
+    };
+    field(box, "Factor", ef.name, efSet("name"), { key: ef.id + ".n" });
+    field(box, "Description", ef.description, efSet("description"), { key: ef.id + ".d", multiline: true });
+    if (ef.barriers.length) hint(box, ef.barriers.length + " escalation-factor barrier(s): " + ef.barriers.map((b) => b.name).join(", "));
+    const row = document.createElement("div");
+    row.className = "row";
+    button(row, "Remove", () => {
+      mutate(() => { const cur = findItem(sel); cur.item.escalationFactors = cur.item.escalationFactors.filter((x) => x.id !== ef.id); });
+      renderPanel();
+    }, "danger");
+    box.appendChild(row);
+    panel.appendChild(box);
+  });
+  const row = document.createElement("div");
+  row.className = "row";
+  button(row, "+ Add escalation factor", () => {
+    mutate(() => findItem(sel).item.escalationFactors.push(newEscalationFactor()));
+    renderPanel();
+    renderDiagram();
+  });
+  panel.appendChild(row);
+}
+
+/* ---- banners (inline messages, no alert()) ---- */
+
+function showBanner({ id, level = "info", text, buttons = [], sticky = false }) {
+  if (id) clearBanner(id);
+  const div = document.createElement("div");
+  div.className = "banner " + level;
+  div.setAttribute("role", level === "error" ? "alert" : "status");
+  if (id) div.dataset.id = id;
+  const t = document.createElement("span");
+  t.className = "text"; t.textContent = text;
+  div.appendChild(t);
+  const remove = () => div.remove();
+  for (const b of buttons) {
+    const el = document.createElement("button");
+    el.textContent = b.label;
+    if (b.danger) el.className = "danger";
+    el.addEventListener("click", () => { remove(); if (b.onClick) b.onClick(); });
+    div.appendChild(el);
+  }
+  if (!buttons.length || sticky) {
+    const x = document.createElement("button");
+    x.textContent = "✕"; x.title = "Dismiss";
+    x.addEventListener("click", remove);
+    div.appendChild(x);
+  }
+  $("banners").appendChild(div);
+  if (!buttons.length && !sticky) setTimeout(remove, 4000);
+}
+function clearBanner(id) {
+  document.querySelectorAll('#banners [data-id="' + id + '"]').forEach((e) => e.remove());
+}
+
+/* ---- toolbar state ---- */
+
+function updateChrome() {
+  const dirty = isDirty();
+  $("fileLabel").textContent = (state.fileName || "(unsaved diagram)") + (dirty ? "  ● unsaved changes" : "");
+  document.title = (dirty ? "* " : "") + (state.model.meta.title || "Bowtie") + " - Bowtie editor";
+  $("btnUndo").disabled = !history.past.length;
+  $("btnRedo").disabled = !history.future.length;
+}
+
+function wireUi() {
+  $("btnNew").onclick = newDiagram;
+  $("btnOpen").onclick = openFile;
+  $("btnSave").onclick = saveFile;
+  $("btnSaveAs").onclick = saveFileAs;
+  $("btnUndo").onclick = undo;
+  $("btnRedo").onclick = redo;
+  $("btnAddThreat").onclick = addThreat;
+  $("btnAddConsequence").onclick = addConsequence;
+  $("btnZoomIn").onclick = () => zoomCenter(1.25);
+  $("btnZoomOut").onclick = () => zoomCenter(0.8);
+  $("btnFit").onclick = fitToScreen;
+  $("btnExportSvg").onclick = exportSvg;
+  $("btnExportPng").onclick = exportPng;
+  $("btnPrint").onclick = printDiagram;
+
+  $("fileInput").addEventListener("change", async () => {
+    const file = $("fileInput").files[0];
+    if (!file) return;
+    loadFromText(await file.text(), file.name, null);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    const inField = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "");
+    const ctrl = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    if (ctrl && key === "s") { e.preventDefault(); saveFile(); }
+    else if (ctrl && !inField && key === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if (ctrl && !inField && (key === "y" || (key === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
+    else if (!inField && !ctrl && e.key === "Delete" && !/^(BUTTON|A)$/.test((e.target && e.target.tagName) || "")) { e.preventDefault(); requestDelete(); }
+    else if (e.key === "Escape" && !inField) select(null);
+  });
+
+  window.addEventListener("beforeunload", (e) => {
+    if (isDirty()) { e.preventDefault(); e.returnValue = ""; }
+  });
+  window.addEventListener("beforeprint", () => {      // let the SVG scale the whole diagram into the print box
+    const b = state.pos.bounds, svg = $("canvas").querySelector("svg");
+    svg.setAttribute("viewBox", [b.x, b.y, b.w, b.h].join(" "));
+    $("viewport").removeAttribute("transform");
+  });
+  window.addEventListener("afterprint", () => {
+    $("canvas").querySelector("svg").removeAttribute("viewBox");
+    applyView();
+  });
+  window.addEventListener("resize", () => { if (!document.hidden) fitToScreen(); });
+}
+
+function init() {
+  wireUi();
+  wireCanvas();
+  state.model = exampleModel();
+  state.savedJson = "";
+  afterChange({ skipAutosave: true });
+  offerRestore();
+  if (!hasSavePicker()) {
+    showBanner({ level: "info", text: "File System Access API not available: Save downloads a .json file and Open uses a file chooser." });
+  }
+}
+init();
+</script>
+</body>
+</html>
